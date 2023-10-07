@@ -19,9 +19,11 @@ model AssetPrice {
 
 model Order{
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  symbol String
-  price Float
-  type String
-  status String
-  datetime DateTime @default(now())
+  symbol              String
+  price               Float     // This will represent the current order price (or stop price)
+  highestObservedPrice Float?    // This will store the highest price observed since the order was placed
+  type                String    // e.g., "STOP_LIMIT", "MARKET", etc.
+  status              String    // e.g., "OPEN", "FILLED", "CANCELLED", etc.
+  datetime            DateTime  @default(now())
+  binanceOrderId      String?    // This field stores the order ID from Binance, which is crucial for future interactions with the order
 }
