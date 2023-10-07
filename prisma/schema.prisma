@@ -14,5 +14,14 @@ model AssetPrice {
   id String @id @default(auto()) @map("_id") @db.ObjectId
   symbol   String
   price    Float
-  datetime DateTime
+  datetime DateTime @default(now())
+}
+
+model Order{
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  symbol String
+  price Float
+  type String
+  status String
+  datetime DateTime @default(now())
 }
