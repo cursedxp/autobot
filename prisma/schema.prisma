@@ -26,4 +26,14 @@ model Order{
   status              String    // e.g., "OPEN", "FILLED", "CANCELLED", etc.
   datetime            DateTime  @default(now())
   binanceOrderId      String?    // This field stores the order ID from Binance, which is crucial for future interactions with the order
+  quantity            Float
+}
+
+model Trade {
+  id String    @id @default(auto()) @map("_id") @db.ObjectId
+  symbol    String
+  quantity  Float
+  price     Float
+  tradeType String    // 'BUY' or 'SELL'
+  datetime  DateTime  @default(now())
 }
