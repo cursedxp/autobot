@@ -23,7 +23,7 @@ export class PriceService {
   ) {
     this.assetSymbol = this.configService.get<string>('ASSET_SYMBOL');
     this.binanceWsUrl = this.configService
-      .get<string>('BINANCE_TESTNET_WS_URL')
+      .get<string>('BINANCE_WS_URL')
       .replace('{ASSET_SYMBOL}', this.assetSymbol);
     this.maxRetries = this.configService.get<number>('MAX_RETRIES');
     this.reconnectDelay = this.configService.get<number>('RECONNECT_DELAY');
@@ -85,7 +85,6 @@ export class PriceService {
     }
   };
 
-  private; // TODO: Ensure the Prisma model (assetPrice) is properly defined and indexed for performance
   async storePrice(price: number) {
     try {
       const priceData = await this.prisma.assetPrice.create({
