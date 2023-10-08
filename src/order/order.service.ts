@@ -108,11 +108,7 @@ export class OrderService implements OnModuleInit {
 
       if (latestPrice < currentOrder.highestObservedPrice * 0.99) {
         const quantity = await this.binanceService.getAssetQuantity(symbol);
-        await this.binanceService.executeSellOrder(
-          symbol,
-          quantity,
-          latestPrice,
-        );
+        await this.binanceService.executeSellOrder(symbol, quantity); // Removed the third argument
 
         await this.prisma.order.update({
           where: { id: currentOrder.id },
