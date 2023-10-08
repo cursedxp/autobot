@@ -3,8 +3,6 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import WebSocket from 'ws';
 import { ConfigService } from '@nestjs/config';
 
-//TODO: Find bnb websocket api url
-
 interface BinanceMessage {
   p: string;
 }
@@ -45,6 +43,7 @@ export class PriceService {
   private handleOpen = () => {
     this.logger.log('Connected to Binance');
   };
+
   private handleMessage = async (message: any) => {
     try {
       const data: BinanceMessage = JSON.parse(message.toString());
@@ -86,7 +85,8 @@ export class PriceService {
     }
   };
 
-  private async storePrice(price: number) {
+  private; // TODO: Ensure the Prisma model (assetPrice) is properly defined and indexed for performance
+  async storePrice(price: number) {
     try {
       const priceData = await this.prisma.assetPrice.create({
         data: {
