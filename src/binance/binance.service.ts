@@ -23,19 +23,36 @@ export class BinanceService {
       // Cancel the existing order
       await this.binance.cancel(symbol, orderId);
 
-      //TODO: Determine the quantity dynamically
-      const quantity = 1; // Placeholder value
+      const quantity = 1; // TODO: Determine the quantity dynamically
 
       // Place a new order with the adjusted stop price
-      return await this.binance.sell(symbol, quantity, newStopPrice, {
+      return await this.binance.sell(symbol, quantity, newStopPrice * 0.99, {
         type: 'STOP_LOSS_LIMIT',
-        //TODO: Add other required parameters
+        stopPrice: newStopPrice,
+        // TODO: Add other required parameters
       });
     } catch (error) {
       throw new InternalServerErrorException(
         `Failed to adjust order for ${symbol}. Error: ${error.message}`,
       );
     }
+  }
+
+  async getCurrentPrice(symbol: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      this.binance.prices(symbol, (error, ticker) => {
+        if (error) {
+          reject(
+            new InternalServerErrorException(
+              `Failed to fetch price for ${symbol}. Error: ${error.body}`,
+            ),
+          );
+        } else {
+          const price = ticker[symbol];
+          resolve(parseFloat(price));
+        }
+      });
+    });
   }
 
   async executeSellOrder(
