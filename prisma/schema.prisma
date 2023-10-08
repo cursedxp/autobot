@@ -35,5 +35,6 @@ model Trade {
   quantity  Float
   price     Float
   tradeType String    // 'BUY' or 'SELL'
+  fee Float?  // Fees paid for the transaction
   datetime  DateTime  @default(now())
 }
