@@ -1,16 +1,22 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
-import Binance from 'node-binance-api';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
+import Binance, { OrderType } from 'binance-api-node'; // Adjusted import
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class BinanceService {
-  private binance: any;
+  private binance: ReturnType<typeof Binance>;
+  private logger = new Logger(BinanceService.name);
 
   constructor(private config: ConfigService, private prisma: PrismaService) {
-    this.binance = new Binance().options({
-      APIKEY: this.config.get('BINANCE_API_KEY'),
-      APISECRET: this.config.get('BINANCE_API_SECRET'),
+    this.binance = Binance({
+      apiKey: this.config.get('BINANCE_API_KEY'),
+      apiSecret: this.config.get('BINANCE_API_SECRET'),
+      getTime: undefined, // You can remove this if you don't want to specify any custom getTime function.
     });
   }
 
@@ -21,67 +27,125 @@ export class BinanceService {
   ): Promise<any> {
     try {
       // Cancel the existing order
-      await this.binance.cancel(symbol, orderId);
+      await this.binance.cancelOrder({
+        symbol: symbol,
+        orderId: parseInt(orderId),
+      });
 
       // Determine the quantity dynamically from the Order model
       const orderDetails = await this.prisma.order.findFirst({
         where: { symbol: symbol },
       });
-      const quantity = orderDetails?.quantity; // Fetching the quantity dynamically from the Order model
+      const quantity = orderDetails?.quantity;
 
       // Place a new order with the adjusted stop price
-      return await this.binance.sell(symbol, quantity, newStopPrice * 0.99, {
-        type: 'STOP_LOSS_LIMIT',
-        stopPrice: newStopPrice,
+      return await this.binance.order({
+        symbol: symbol,
+        side: 'SELL',
+        quantity: quantity.toString(),
+        price: (newStopPrice * 0.99).toString(),
+        type: OrderType.STOP_LOSS_LIMIT,
+        stopPrice: newStopPrice.toString(),
         // TODO: Add other required parameters
       });
     } catch (error) {
+      this.logger.error(
+        `Failed to adjust order for ${symbol}. Error: ${JSON.stringify(error)}`,
+      );
       throw new InternalServerErrorException(
-        `Failed to adjust order for ${symbol}. Error: ${error.message}`,
+        `Failed to adjust order for ${symbol}`,
       );
     }
   }
 
   async getCurrentPrice(symbol: string): Promise<number> {
-    return new Promise((resolve, reject) => {
-      this.binance.prices(symbol, (error, ticker) => {
-        if (error) {
-          reject(
-            new InternalServerErrorException(
-              `Failed to fetch price for ${symbol}. Error: ${error.body}`,
-            ),
-          );
-        } else {
-          const price = ticker[symbol];
-          resolve(parseFloat(price));
-        }
-      });
-    });
+    try {
+      const ticker = await this.binance.prices({ symbol: symbol });
+      return parseFloat(ticker[symbol]);
+    } catch (error) {
+      this.logger.error(
+        `Failed to fetch price for ${symbol}. Error: ${JSON.stringify(error)}`,
+      );
+      throw new InternalServerErrorException(
+        `Failed to fetch price for ${symbol}`,
+      );
+    }
   }
 
   async getAssetQuantity(symbol: string): Promise<number> {
-    return new Promise((resolve, reject) => {
-      this.binance.balance((error, balances) => {
-        if (error) {
-          reject(
-            new InternalServerErrorException(
-              `Failed to fetch balance for ${symbol}. Error: ${error.body}`,
-            ),
-          );
-        } else {
-          const asset = symbol.slice(0, -4); // Assuming a pair like BTCUSDT, this will extract "BTC"
-          const quantity = parseFloat(balances[asset].available);
-          resolve(quantity);
-        }
+    try {
+      const accountInfo = await this.binance.accountInfo();
+      const asset = symbol.slice(0, -4); // Assuming a pair like BTCUSDT, this will extract "BTC"
+      const assetBalance = accountInfo.balances.find((b) => b.asset === asset);
+      return parseFloat(assetBalance?.free || '0');
+    } catch (error) {
+      this.logger.error(
+        `Failed to fetch balance for ${symbol}. Error: ${JSON.stringify(
+          error,
+        )}`,
+      );
+      throw new InternalServerErrorException(
+        `Failed to fetch balance for ${symbol}`,
+      );
+    }
+  }
+  async executeSellOrder(symbol: string, quantity: number): Promise<any> {
+    try {
+      const response = await this.binance.order({
+        symbol: symbol,
+        side: 'SELL',
+        quantity: quantity.toString(), // Note: converting to string if the API expects a string
+        type: OrderType.MARKET,
       });
-    });
+
+      if (response && response.status === 'FILLED') {
+        await this.prisma.trade.create({
+          data: {
+            symbol: symbol,
+            quantity: parseFloat(response.executedQty),
+            price: parseFloat(response.price), // This may need to be adjusted if the response doesn't have a price field for MARKET orders
+            tradeType: 'SELL',
+          },
+        });
+      } else {
+        this.logger.error(
+          `Failed to execute sell order for ${symbol}. Response: ${JSON.stringify(
+            response,
+          )}`,
+        );
+      }
+
+      return response;
+    } catch (error) {
+      this.logger.error(
+        `Failed to execute sell order for ${symbol}. Error: ${JSON.stringify(
+          error,
+        )}`,
+      );
+      throw new InternalServerErrorException(
+        `Failed to execute sell order for ${symbol}`,
+      );
+    }
   }
 
-  async executeSellOrder(
+  async executeTrade(
     symbol: string,
-    quantity: number,
     price: number,
-  ): Promise<any> {
-    return await this.binance.sell(symbol, quantity, price, { type: 'MARKET' });
+    quantity: number,
+    type: string,
+    fee: number,
+  ) {
+    // ... Your logic to execute the trade ...
+
+    // Once the trade is successful, log it
+    await this.prisma.trade.create({
+      data: {
+        symbol: symbol,
+        price: price,
+        quantity: quantity,
+        tradeType: type, // 'BUY' or 'SELL'
+        fee: fee,
+      },
+    });
   }
 }
