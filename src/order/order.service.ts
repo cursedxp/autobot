@@ -15,14 +15,15 @@ export class OrderService implements OnModuleInit {
     private binanceService: BinanceService,
   ) {}
 
-  @Cron('20 * * * * *')
+  @Cron('20 * * * * *') // Runs every minute at the 20th second. Adjust the frequency if needed
   handlePriceAdjustment() {
-    const assetSymbol = this.config.get('ASSET_SYMBOL');
+    const assetSymbol = this.config.get<string>('ASSET_SYMBOL');
     this.adjustStopOrder(assetSymbol);
     this.logger.debug(`Checked and adjusted stop order for ${assetSymbol}`);
   }
+
   async onModuleInit() {
-    await this.initializeOrder('BTCUSDT'); // or any other symbol you're tracking
+    await this.initializeOrder(this.config.get<string>('ASSET_SYMBOL'));
   }
 
   async initializeOrder(symbol: string): Promise<void> {
@@ -31,21 +32,19 @@ export class OrderService implements OnModuleInit {
     });
 
     if (!existingOrder) {
-      // Fetch the current price from Binance (or your AssetPrice model)
-      const currentPrice = await this.binanceService.getCurrentPrice(symbol); // You'll need to implement this function in your Binance service
-
+      const currentPrice = await this.binanceService.getCurrentPrice(symbol);
+      const assetQuantity = await this.binanceService.getAssetQuantity(symbol); // Fetching the quantity dynamically
       await this.prisma.order.create({
         data: {
           symbol: symbol,
           price: currentPrice,
-          type: 'STOP_LIMIT', // or whatever type you want to initialize with
+          type: 'STOP_LIMIT',
           status: 'OPEN',
-          // If you have an actual order on Binance, you'd fetch and save the Binance order ID here
-          // binanceOrderId: 'some_order_id_from_binance',
+          quantity: assetQuantity, // Using the dynamically fetched quantity
         },
       });
       this.logger.log(
-        `Initialized starting order for ${symbol} at price ${currentPrice}`,
+        `Initialized starting order for ${symbol} at price ${currentPrice} with quantity ${assetQuantity}`,
       );
     }
   }
@@ -60,24 +59,20 @@ export class OrderService implements OnModuleInit {
         orderBy: { datetime: 'desc' },
       });
 
-      if (!currentOrder || !latestPriceData) {
-        this.logger.warn(
-          `Missing current order or latest price data for symbol: ${symbol}`,
-        );
-        return;
-      }
-
       const latestPrice = latestPriceData.price;
 
-      if (latestPrice > (currentOrder.highestObservedPrice || 0)) {
+      if (latestPrice > currentOrder.highestObservedPrice) {
         await this.prisma.order.update({
           where: { id: currentOrder.id },
           data: { highestObservedPrice: latestPrice },
         });
       }
 
-      const thresholdPrice = currentOrder.price * 1.005;
-      if (latestPrice > thresholdPrice) {
+      const adjustmentThreshold = this.config.get<number>(
+        'ADJUSTMENT_THRESHOLD',
+        1.005,
+      );
+      if (latestPrice > currentOrder.price * adjustmentThreshold) {
         const newStopPrice = this.calculateNewStopPrice(latestPrice);
         const newOrderDetails = await this.binanceService.adjustOrder(
           symbol,
@@ -85,7 +80,6 @@ export class OrderService implements OnModuleInit {
           newStopPrice,
         );
 
-        // Assuming the newOrderDetails contains a field "orderId" with the new order ID from Binance
         await this.prisma.order.update({
           where: { id: currentOrder.id },
           data: {
@@ -102,35 +96,37 @@ export class OrderService implements OnModuleInit {
   }
 
   async checkAndExecuteSell(symbol: string) {
-    const currentOrder = await this.prisma.order.findFirst({
-      where: { symbol, status: 'OPEN' },
-    });
-
-    const latestPriceData = await this.prisma.assetPrice.findFirst({
-      where: { symbol },
-      orderBy: { datetime: 'desc' },
-    });
-
-    if (!currentOrder || !latestPriceData) {
-      return; // Handle error or missing data
-    }
-
-    const latestPrice = latestPriceData.price;
-
-    // Check if the price has dropped by 1% from the highest observed price
-    if (latestPrice < currentOrder.highestObservedPrice * 0.99) {
-      //TODO: Determine the quantity dynamically
-      await this.binanceService.executeSellOrder(symbol, 1, latestPrice);
-
-      // Update the order status in the local database
-      await this.prisma.order.update({
-        where: { id: currentOrder.id },
-        data: { status: 'FILLED' },
+    try {
+      const currentOrder = await this.prisma.order.findFirst({
+        where: { symbol, status: 'OPEN' },
       });
+      const latestPriceData = await this.prisma.assetPrice.findFirst({
+        where: { symbol },
+        orderBy: { datetime: 'desc' },
+      });
+      const latestPrice = latestPriceData.price;
+
+      if (latestPrice < currentOrder.highestObservedPrice * 0.99) {
+        const quantity = await this.binanceService.getAssetQuantity(symbol);
+        await this.binanceService.executeSellOrder(
+          symbol,
+          quantity,
+          latestPrice,
+        );
+
+        await this.prisma.order.update({
+          where: { id: currentOrder.id },
+          data: { status: 'FILLED' },
+        });
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to execute sell order for symbol: ${symbol}. Error: ${error.message}`,
+      );
     }
   }
 
   private calculateNewStopPrice(latestPrice: number): number {
-    return latestPrice; // Modify as required
+    return latestPrice * 1.01; // Setting the new stop price 1% above the latest price
   }
 }
