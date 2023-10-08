@@ -1,13 +1,13 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import Binance from 'node-binance-api';
-
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class BinanceService {
   private binance: any;
 
-  constructor(private config: ConfigService) {
+  constructor(private config: ConfigService, private prisma: PrismaService) {
     this.binance = new Binance().options({
       APIKEY: this.config.get('BINANCE_API_KEY'),
       APISECRET: this.config.get('BINANCE_API_SECRET'),
@@ -23,7 +23,11 @@ export class BinanceService {
       // Cancel the existing order
       await this.binance.cancel(symbol, orderId);
 
-      const quantity = 1; // TODO: Determine the quantity dynamically
+      // Determine the quantity dynamically from the Order model
+      const orderDetails = await this.prisma.order.findFirst({
+        where: { symbol: symbol },
+      });
+      const quantity = orderDetails?.quantity; // Fetching the quantity dynamically from the Order model
 
       // Place a new order with the adjusted stop price
       return await this.binance.sell(symbol, quantity, newStopPrice * 0.99, {
@@ -50,6 +54,24 @@ export class BinanceService {
         } else {
           const price = ticker[symbol];
           resolve(parseFloat(price));
+        }
+      });
+    });
+  }
+
+  async getAssetQuantity(symbol: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      this.binance.balance((error, balances) => {
+        if (error) {
+          reject(
+            new InternalServerErrorException(
+              `Failed to fetch balance for ${symbol}. Error: ${error.body}`,
+            ),
+          );
+        } else {
+          const asset = symbol.slice(0, -4); // Assuming a pair like BTCUSDT, this will extract "BTC"
+          const quantity = parseFloat(balances[asset].available);
+          resolve(quantity);
         }
       });
     });
