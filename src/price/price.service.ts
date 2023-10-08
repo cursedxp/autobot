@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import WebSocket from 'ws';
 import { ConfigService } from '@nestjs/config';
@@ -6,7 +6,7 @@ import { ConfigService } from '@nestjs/config';
 //TODO: Find bnb websocket api url
 
 interface BinanceMessage {
-  p: number;
+  p: string;
 }
 
 @Injectable()
@@ -17,6 +17,7 @@ export class PriceService {
   private binanceWsUrl: string;
   private maxRetries: number;
   private reconnectDelay: number;
+  private logger = new Logger(PriceService.name);
 
   constructor(
     private configService: ConfigService,
@@ -24,10 +25,11 @@ export class PriceService {
   ) {
     this.assetSymbol = this.configService.get<string>('ASSET_SYMBOL');
     this.binanceWsUrl = this.configService
-      .get<string>('BINANCE_WS_URL')
+      .get<string>('BINANCE_TESTNET_WS_URL')
       .replace('{ASSET_SYMBOL}', this.assetSymbol);
     this.maxRetries = this.configService.get<number>('MAX_RETRIES');
     this.reconnectDelay = this.configService.get<number>('RECONNECT_DELAY');
+    this.connectToBinance();
   }
 
   private connectToBinance() {
@@ -40,33 +42,29 @@ export class PriceService {
       .on('close', this.handleClose);
   }
 
-  private handleOpen() {
-    console.log('Connected to Binance');
-  }
-  private async handleMessage(message: any) {
+  private handleOpen = () => {
+    this.logger.log('Connected to Binance');
+  };
+  private handleMessage = async (message: any) => {
     try {
       const data: BinanceMessage = JSON.parse(message.toString());
-      const price = data.p;
+      const price = parseFloat(data.p); // Convert string to number
 
-      if (typeof price !== 'number' || price <= 0) {
-        console.warn(`Invalid price data for ${this.assetSymbol}:`, price);
+      if (isNaN(price) || price <= 0) {
+        this.logger.warn(`Invalid price data for ${this.assetSymbol}:`, price);
         return;
       }
 
-      console.log(`Price of ${this.assetSymbol} is: ${price}`);
       await this.storePrice(price);
     } catch (error) {
-      console.error(
-        `Error processing the message for ${this.assetSymbol}:`,
-        message,
-        'Error:',
-        error,
+      this.logger.error(
+        `Error processing the message for ${this.assetSymbol}: ${message}. Error: ${error.message}`,
       );
     }
-  }
+  };
 
   private handleError = (error: any) => {
-    console.error(
+    this.logger.error(
       `WebSocket Error while processing price for ${this.assetSymbol}:`,
       error,
     );
@@ -75,14 +73,14 @@ export class PriceService {
 
   private handleClose = () => {
     if (this.retries < this.maxRetries) {
-      console.log('Trying to reconnect...');
+      this.logger.log('Trying to reconnect...');
       setTimeout(() => {
         this.retries++;
         this.reconnectDelay *= 1.5; // Increase delay by 50%
         this.connectToBinance();
       }, this.reconnectDelay);
     } else {
-      console.error(
+      this.logger.error(
         'Max retries reached. Check the connection or the endpoint.',
       );
     }
@@ -98,10 +96,7 @@ export class PriceService {
       });
       return priceData;
     } catch (error) {
-      console.error(
-        `Error storing price data for ${this.assetSymbol} at price ${price}:`,
-        error,
-      );
+      this.logger.error(`Error storing price data: ${error.message}`);
     }
   }
 }
