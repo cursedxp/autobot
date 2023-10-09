@@ -14,12 +14,75 @@ export class OrderService implements OnModuleInit {
     private prisma: PrismaService,
     private binanceService: BinanceService,
   ) {}
+  private isRunning = false;
+  @Cron('10 * * * * *')
+  async handleTradingLogic() {
+    if (this.isRunning) {
+      this.logger.debug(`Trading logic is currently running. Exiting...`);
+      return;
+    }
 
-  @Cron('20 * * * * *') // Runs every minute at the 20th second. Adjust the frequency if needed
-  handlePriceAdjustment() {
+    this.isRunning = true;
     const assetSymbol = this.config.get<string>('ASSET_SYMBOL');
-    this.adjustStopOrder(assetSymbol);
-    this.logger.debug(`Checked and adjusted stop order for ${assetSymbol}`);
+    const currentTimestamp = new Date().toISOString();
+    this.logger.debug(
+      `[${currentTimestamp}] Starting trading logic for ${assetSymbol}`,
+    );
+
+    const currentOrder = await this.prisma.order.findFirst({
+      where: { symbol: assetSymbol, status: 'OPEN' },
+    });
+    let latestPriceData;
+
+    try {
+      latestPriceData = await this.prisma.assetPrice.findFirst({
+        where: { symbol: assetSymbol.toLowerCase() },
+        orderBy: { datetime: 'desc' },
+        take: 1,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Error fetching latest price for ${assetSymbol}: ${error.message}`,
+      );
+    }
+
+    if (latestPriceData) {
+      this.logger.debug(
+        `Fetched price data for ${assetSymbol}: ${JSON.stringify(
+          latestPriceData,
+        )}`,
+      );
+    } else {
+      this.logger.warn(`No price data found for ${assetSymbol}`);
+    }
+
+    this.logger.debug(
+      `Current order for ${assetSymbol}: ${JSON.stringify(currentOrder)}`,
+    );
+    this.logger.debug(
+      `Latest price data for ${assetSymbol}: ${JSON.stringify(
+        latestPriceData,
+      )}`,
+    );
+
+    if (currentOrder && latestPriceData) {
+      await this.adjustStopOrder(
+        assetSymbol,
+        currentOrder,
+        latestPriceData.price,
+      );
+      await this.checkAndExecuteSell(
+        assetSymbol,
+        currentOrder,
+        latestPriceData.price,
+      );
+    }
+    this.logger.debug(
+      `[${currentTimestamp}] Finished trading logic for ${assetSymbol}`,
+    );
+
+    this.logger.debug(`Handled trading logic for ${assetSymbol}`);
+    this.isRunning = false;
   }
 
   async onModuleInit() {
@@ -38,6 +101,7 @@ export class OrderService implements OnModuleInit {
         data: {
           symbol: symbol,
           price: currentPrice,
+          highestObservedPrice: currentPrice, // Initializing with the current price
           type: 'STOP_LIMIT',
           status: 'OPEN',
           quantity: assetQuantity, // Using the dynamically fetched quantity
@@ -49,23 +113,22 @@ export class OrderService implements OnModuleInit {
     }
   }
 
-  async adjustStopOrder(symbol: string): Promise<void> {
+  async adjustStopOrder(
+    symbol: string,
+    currentOrder: any,
+    latestPrice: number,
+  ): Promise<void> {
+    this.logger.debug(
+      `Adjusted stop order for ${symbol} with new stop price of ${latestPrice}`,
+    );
+
     try {
-      const currentOrder = await this.prisma.order.findFirst({
-        where: { symbol, status: 'OPEN' },
-      });
-      const latestPriceData = await this.prisma.assetPrice.findFirst({
-        where: { symbol },
-        orderBy: { datetime: 'desc' },
-      });
-
-      const latestPrice = latestPriceData.price;
-
       if (latestPrice > currentOrder.highestObservedPrice) {
         await this.prisma.order.update({
           where: { id: currentOrder.id },
           data: { highestObservedPrice: latestPrice },
         });
+        currentOrder.highestObservedPrice = latestPrice; // Updating in-memory object
       }
 
       const adjustmentThreshold = this.config.get<number>(
@@ -95,20 +158,19 @@ export class OrderService implements OnModuleInit {
     }
   }
 
-  async checkAndExecuteSell(symbol: string) {
-    try {
-      const currentOrder = await this.prisma.order.findFirst({
-        where: { symbol, status: 'OPEN' },
-      });
-      const latestPriceData = await this.prisma.assetPrice.findFirst({
-        where: { symbol },
-        orderBy: { datetime: 'desc' },
-      });
-      const latestPrice = latestPriceData.price;
+  async checkAndExecuteSell(
+    symbol: string,
+    currentOrder: any,
+    latestPrice: number,
+  ): Promise<void> {
+    this.logger.debug(
+      `Checking sell condition for ${symbol}. Latest price: ${latestPrice}, Highest observed price: ${currentOrder.highestObservedPrice}`,
+    );
 
+    try {
       if (latestPrice < currentOrder.highestObservedPrice * 0.99) {
         const quantity = await this.binanceService.getAssetQuantity(symbol);
-        await this.binanceService.executeSellOrder(symbol, quantity); // Removed the third argument
+        await this.binanceService.executeSellOrder(symbol, quantity);
 
         await this.prisma.order.update({
           where: { id: currentOrder.id },
