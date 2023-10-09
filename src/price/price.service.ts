@@ -21,10 +21,13 @@ export class PriceService {
     private configService: ConfigService,
     private prisma: PrismaService,
   ) {
-    this.assetSymbol = this.configService.get<string>('ASSET_SYMBOL');
+    this.assetSymbol = this.configService
+      .get<string>('ASSET_SYMBOL')
+      .toLowerCase();
     this.binanceWsUrl = this.configService
       .get<string>('BINANCE_WS_URL')
       .replace('{ASSET_SYMBOL}', this.assetSymbol);
+    console.log(this.binanceWsUrl);
     this.maxRetries = this.configService.get<number>('MAX_RETRIES');
     this.reconnectDelay = this.configService.get<number>('RECONNECT_DELAY');
     this.connectToBinance();
@@ -41,7 +44,7 @@ export class PriceService {
   }
 
   private handleOpen = () => {
-    this.logger.log('Connected to Binance');
+    this.logger.log('Successfully connected to Binance via WebSocket.');
   };
 
   private handleMessage = async (message: any) => {
@@ -89,13 +92,18 @@ export class PriceService {
     try {
       const priceData = await this.prisma.assetPrice.create({
         data: {
-          symbol: this.assetSymbol,
+          symbol: this.assetSymbol.toLowerCase(),
           price,
         },
       });
+      this.logger.debug(
+        `Successfully stored price for ${this.assetSymbol}: ${price}`,
+      );
       return priceData;
     } catch (error) {
-      this.logger.error(`Error storing price data: ${error.message}`);
+      this.logger.error(
+        `Error storing price data for ${this.assetSymbol}: ${error.message}`,
+      );
     }
   }
 }
