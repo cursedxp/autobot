@@ -12,7 +12,10 @@ import { ProfitService } from './profit/profit.service';
 import { ProfitController } from './profit/profit.controller';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), OrderModule],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
+    OrderModule,
+  ],
   controllers: [AppController, HealthController, ProfitController],
   providers: [
     AppService,
