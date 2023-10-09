@@ -75,7 +75,11 @@ export class BinanceService {
   async getAssetQuantity(symbol: string): Promise<number> {
     try {
       const accountInfo = await this.binance.accountInfo();
-      const asset = symbol.slice(0, -4); // Assuming a pair like BTCUSDT, this will extract "BTC"
+      this.logger.debug(`Account Info: ${JSON.stringify(accountInfo)}`); // Additional logging
+
+      const asset = symbol.slice(0, -4);
+      this.logger.debug(`Extracted Asset: ${asset}`); // Additional logging
+
       const assetBalance = accountInfo.balances.find((b) => b.asset === asset);
       return parseFloat(assetBalance?.free || '0');
     } catch (error) {
@@ -89,12 +93,19 @@ export class BinanceService {
       );
     }
   }
+
   async executeSellOrder(symbol: string, quantity: number): Promise<any> {
+    // Safety check for quantity
+    if (quantity <= 0) {
+      this.logger.warn(`Invalid quantity provided for sell order: ${quantity}`);
+      throw new Error(`Invalid quantity provided for sell order: ${quantity}`);
+    }
+
     try {
       const response = await this.binance.order({
         symbol: symbol,
         side: 'SELL',
-        quantity: quantity.toString(), // Note: converting to string if the API expects a string
+        quantity: quantity.toString(),
         type: OrderType.MARKET,
       });
 
@@ -103,7 +114,7 @@ export class BinanceService {
           data: {
             symbol: symbol,
             quantity: parseFloat(response.executedQty),
-            price: parseFloat(response.price), // This may need to be adjusted if the response doesn't have a price field for MARKET orders
+            price: parseFloat(response.price),
             tradeType: 'SELL',
           },
         });
