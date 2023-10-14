@@ -106,4 +106,16 @@ export class PriceService {
       );
     }
   }
+
+  // Function to calculate moving average
+  async calculateMovingAverage(symbol: string, days: number): Promise<number> {
+    const prices = await this.prisma.assetPrice.findMany({
+      where: { symbol: symbol.toLowerCase() },
+      orderBy: { datetime: 'desc' },
+      take: days,
+    });
+
+    const total = prices.reduce((sum, priceData) => sum + priceData.price, 0);
+    return total / days;
+  }
 }
